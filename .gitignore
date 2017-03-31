@@ -1,0 +1,4 @@
+*.npy
+*.dicom
+*.hdf5
+*.out
