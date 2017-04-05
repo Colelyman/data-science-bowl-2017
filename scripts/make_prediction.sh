@@ -21,7 +21,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
 source activate dsb 
 
 echo 'Starting prediction'
-python model.py --predict True
+python ./code/model.py --predict True
 echo 'Finished predicting'
 
 source deactivate dsb
