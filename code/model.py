@@ -12,6 +12,53 @@ from random import randint
 from keras import backend as K
 K.set_image_dim_ordering('th')
 
+def gen_patient_and_path(data_path):
+    patient_and_path = {}
+    for f in os.listdir(data_path):
+        path = os.path.join(data_path, f)
+        #if os.path.isdir(path):
+        if os.path.isfile(path):
+            #print(path)
+            image_file = dicom.read_file(path)
+            patient_id = image_file.PatientID
+            #print(patient_id)
+            if patient_id not in patient_and_path:
+                #print("created")
+                patient_and_path[patient_id] = [path]
+            else:
+                #print("appended")
+                patient_and_path[patient_id].append(path)
+            #del image_file
+    print(len(patient_and_path))
+    return patient_and_path
+
+def gen_submission_and_path(patient_and_path):
+    submissions = gen_submissions()
+    print(len(submissions))
+    submissions_and_path = {}
+    for id, file in patient_and_path.items():
+         print(id)
+    for id in submissions:
+         if id in patient_and_path:
+             print(id)
+             if id not in submissions_and_path:
+                 print(id)
+                 submissions_and_path[id] = patient_and_path[id]
+    print("size of submission_path dictionary: " + str(len(submissions_and_path)))
+    return submissions_and_path
+
+def gen_submissions():
+    tests = []
+    sub_path = "../data/sample_submission.csv"
+    with open(sub_path, 'r') as submission_file:
+        for line in submission_file:
+            id = line.strip().split(',')[0]
+            print(id)
+            tests.append(id)
+    print("end submission file")
+    return tests
+
+
 def load_image_paths(data_path, num_images):
     i = 0
     image_paths = []
@@ -206,7 +253,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--perc_train', help='The percentage of the data to include in the training set.', type=float, default=0.8)
-    parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/sample_images/sample_images/')
+    parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/stage1/')
     parser.add_argument('--predict', type=bool, default=False)
     parser.add_argument('--num_images', type=int, default=10000)
     parser.add_argument('--output_path', default='../results/results.csv')
@@ -216,17 +263,19 @@ if __name__ == '__main__':
     output_args(args)
     if args.predict:
         print('Loading image paths', flush=True)
-        image_paths, labels = load_image_paths(args.data_path)
-        print('Finding test cases', flush=True)
-        tests = gen_tests(image_paths, labels)
-        print('Linking images to patients', flush=True)
-        patient_images = gen_patient_images(image_paths)
+        patient_and_path = gen_patient_and_path(args.data_path)
+        submission_and_path = gen_submission_and_path(patient_and_path)
         print('Loading the model', flush=True)
-        model_path = './weights3.hdf5'
+        model_path = './model.hdf5'
         trained_model = load_trained_model(model_path)
         print ('Model loaded')
-        prediction = make_prediction(trained_model, patient_images)
-        output_results(args.results_path)
+        print('Making predictions')
+        prediction = make_prediction(trained_model, submission_and_path)
+        with open(args.output_path, 'w') as submission_file:
+            submission_file.write("id, cancer \n")
+            for id, result in prediction.items():
+                submission_file.write(str(id) + ', ' + str(result) + '\n')
+
     else:
         print('Loading image paths', flush=True)
         image_paths, labels = load_image_paths(args.data_path, args.num_images)
