@@ -6,7 +6,7 @@ from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Convolution2D, MaxPooling2D
 from keras.callbacks import ModelCheckpoint
 
-import dicom, os, argparse
+import dicom, os, argparse, pickle
 from random import randint
 
 from keras import backend as K
@@ -16,19 +16,15 @@ def gen_patient_and_path(data_path):
     patient_and_path = {}
     for f in os.listdir(data_path):
         path = os.path.join(data_path, f)
-        #if os.path.isdir(path):
         if os.path.isfile(path):
-            #print(path)
+            print(path)
             image_file = dicom.read_file(path)
             patient_id = image_file.PatientID
             #print(patient_id)
             if patient_id not in patient_and_path:
-                #print("created")
                 patient_and_path[patient_id] = [path]
             else:
-                #print("appended")
                 patient_and_path[patient_id].append(path)
-            #del image_file
     print(len(patient_and_path))
     return patient_and_path
 
@@ -256,15 +252,29 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/stage1/')
     parser.add_argument('--predict', type=bool, default=False)
     parser.add_argument('--num_images', type=int, default=10000)
-    parser.add_argument('--output_path', default='../results/results.csv')
+    parser.add_argument('--output_path', default='./results/results.csv')
 
     args = parser.parse_args()
 
     output_args(args)
     if args.predict:
         print('Loading image paths', flush=True)
-        patient_and_path = gen_patient_and_path(args.data_path)
-        submission_and_path = gen_submission_and_path(patient_and_path)
+        patient_and_path = {}
+        if not os.path.isfile('./data/patient_and_path.p'):
+            patient_and_path = gen_patient_and_path(args.data_path)
+            with open('./data/patient_and_path.p', 'wb') as pat_path:
+                pickle.dump(patient_and_path, pat_path)
+        else:
+            with open('./data/patient_and_path.p', 'rb') as pat_path:
+                patient_and_path = pickle.load(pat_path)
+        submission_and_path = {}
+        if not os.path.isfile('./data/submission_and_path.p'):
+            submission_and_path = gen_submission_and_path(patient_and_path)
+            with open('./data/submission_and_path.p', 'wb') as sub_path:
+                pickle.dump(submission_and_path, sub_path)
+        else:
+            with open('./data/submission_and_path.p', 'rb') as sub_path:
+                submission_and_path = pickle.load(sub_path)
         print('Loading the model', flush=True)
         model_path = './model.hdf5'
         trained_model = load_trained_model(model_path)
@@ -272,9 +282,9 @@ if __name__ == '__main__':
         print('Making predictions')
         prediction = make_prediction(trained_model, submission_and_path)
         with open(args.output_path, 'w') as submission_file:
-            submission_file.write("id, cancer \n")
+            submission_file.write("id,cancer \n")
             for id, result in prediction.items():
-                submission_file.write(str(id) + ', ' + str(result) + '\n')
+                submission_file.write(str(id) + ',' + str(result) + '\n')
 
     else:
         print('Loading image paths', flush=True)

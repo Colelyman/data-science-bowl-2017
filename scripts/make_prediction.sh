@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=8:00:00   # walltime
+#SBATCH --time=12:00:00   # walltime
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --mem-per-cpu=64G  # memory per CPU core
@@ -20,8 +20,10 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
 
 source activate dsb 
 
+module load cuda/7.5.18
+
 echo 'Starting prediction'
-python ./code/model.py --predict True
+THEANO_FLAGS=device=gpu0,floatX=float32 python ./code/model.py --predict True
 echo 'Finished predicting'
 
 source deactivate dsb
