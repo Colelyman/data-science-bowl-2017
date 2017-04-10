@@ -1,4 +1,4 @@
-name: dsb
+name: dsb3
 channels: !!python/tuple
 - conda-forge
 - bioconda

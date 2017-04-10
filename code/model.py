@@ -1,16 +1,45 @@
 import numpy as np
+import pickle
 #np.random.seed(123)
 
 from keras.models import Sequential, load_model
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Convolution2D, MaxPooling2D
 from keras.callbacks import ModelCheckpoint
+from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
 
 import dicom, os, argparse
 from random import randint
 
 from keras import backend as K
 K.set_image_dim_ordering('th')
+
+def gen_patient_and_path(data_path):
+    patient_and_path = {}
+    for f in os.listdir(data_path):
+        path = os.path.join(data_path, f)
+        #if os.path.isdir(path):
+        if os.path.isfile(path):
+            image_file = dicom.read_file(path)
+            patient_id = image_file.PatientID
+            if patient_id not in patient_and_path:
+                patient_and_path[patient_id] = [path]
+            else:
+                patient_and_path[patient_id].append(path)
+            #del image_file
+    pickle.dump(patient_and_path, open("../objects/patient_and_path.pkl","wb"))
+    return patient_and_path
+
+def gen_submission_and_path(patient_and_path):
+    submissions = gen_submissions()
+    submissions_and_path = {}
+    #for id, file in patient_and_path.items():
+    for id in submissions:
+         if id in patient_and_path:
+             if id not in submissions_and_path:
+                 submissions_and_path[id] = patient_and_path[id]
+    return submissions_and_path
+
 
 def load_image_paths(data_path, num_images):
     i = 0
@@ -31,6 +60,7 @@ def load_image_paths(data_path, num_images):
             labels[id] = cancer
 
     # shuffle image_paths
+    pickle.dump(labels, open("../objects/labels.pkl", "wb"))
     np.random.shuffle(image_paths)
     return image_paths, labels
 
@@ -76,20 +106,13 @@ def gen_labels(image_paths, labels):
             Y[i] = [0, 1]
     return Y
 
-def gen_tests(image_paths, labels):
+def gen_submissions():
     tests = []
-    matching_tests = []
-    for i in range(len(image_paths)):
-        image_file = dicom.read_file(image_paths[i])
-        patient_id = image_file.PatientID
-        if patient_id not in labels:
-            tests.append(patient_id)
     sub_path = "../data/sample_submission.csv"
     with open(sub_path, 'r') as submission_file:
         for line in submission_file:
             id = line.strip().split(',')[0]
-            if id in tests:
-                matching_tests.append(id)
+            tests.append(id)
     return tests
 
 def gen_patient_images(image_paths):
@@ -206,27 +229,27 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--perc_train', help='The percentage of the data to include in the training set.', type=float, default=0.8)
-    parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/sample_images/sample_images/')
+    parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/stage1/')
     parser.add_argument('--predict', type=bool, default=False)
     parser.add_argument('--num_images', type=int, default=10000)
     parser.add_argument('--output_path', default='../results/results.csv')
+    parser.add_argument('--preprocess', help='Preprocesses the data images', type=bool,default=False)
 
     args = parser.parse_args()
 
     output_args(args)
     if args.predict:
         print('Loading image paths', flush=True)
-        image_paths, labels = load_image_paths(args.data_path)
-        print('Finding test cases', flush=True)
-        tests = gen_tests(image_paths, labels)
-        print('Linking images to patients', flush=True)
-        patient_images = gen_patient_images(image_paths)
+        patient_and_path = gen_patient_and_path(args.data_path)
+        submission_and_path = gen_submission_and_path(patient_and_path)
         print('Loading the model', flush=True)
         model_path = './weights3.hdf5'
         trained_model = load_trained_model(model_path)
         print ('Model loaded')
-        prediction = make_prediction(trained_model, patient_images)
+        print ('Making predictions')
+        prediction = make_prediction(trained_model, submission_and_path)
         output_results(args.results_path)
+
     else:
         print('Loading image paths', flush=True)
         image_paths, labels = load_image_paths(args.data_path, args.num_images)
