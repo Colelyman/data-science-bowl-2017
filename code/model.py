@@ -1,9 +1,12 @@
 import numpy as np
+#import numpy.ma as ma
 #np.random.seed(123)
 
 from keras.models import Sequential, load_model
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Convolution2D, MaxPooling2D
+from keras.layers.convolutional import Conv3D
+from keras.layers.pooling import MaxPooling3D
 from keras.callbacks import ModelCheckpoint
 
 import dicom, os, argparse, pickle
@@ -146,7 +149,7 @@ def gen_patient_images(image_paths):
             patient_images[patient_id] = [image_paths[i]]
     return patient_images
 
-def load_data_arrays(image_paths, labels):
+def load_2d_data_arrays(image_paths, labels):
     num_images = len(image_paths)
     print('Number of images to train:', num_images)
     num_train = int(num_images * 0.8)
@@ -175,19 +178,99 @@ def load_data_arrays(image_paths, labels):
 
     return X_train, Y_train, X_test, Y_test
 
-def train_model(num_epochs, batch_size, data):
-    X_train = data[0][0]
-    Y_train = data[0][1]
+def load_3d_patient(image_paths, max_num_images):
+    patient_images = []
+    pixel_images = {}
+    # add the image paths and the slice location to the list
+    for image_path in image_paths:
+        image = dicom.read_file(image_path)
+        patient_images.append((image_path, image.SliceLocation))
+        pixel_images[image_path] = image.pixel_array.astype(np.float)
+        pixel_images[image_path] /= pixel_images[image_path]
 
-    X_test = data[1][0]
-    Y_test = data[1][1]
+    print('Unsorted:', patient_images)
+    # sort the images based on the slice location
+    patient_images.sort(key = lambda x: x[1])
+    print('Sorted:', patient_images)
+
+    # get the pixel array data for each image
+    X = np.ndarray(shape=(max_num_images, 512, 512), dtype=np.float)
+    for i in range(len(patient_images)):
+        X[i] = pixel_images[patient_images[i][0]]
+
+    return X
+
+def load_3d_data_arrays(patient_and_path, labels, perc_train):
+    num_patients = 200
+    max_num_images = 160 # this is the maximum number of images allowed per patient
+    X_train_path = '../data/X_train_3d_' + str(num_patients) + '.npy'
+    Y_train_path = '../data/Y_train_3d_' + str(num_patients) + '.npy'
+    X_test_path = '../data/X_test_3d_' + str(num_patients) + '.npy'
+    Y_test_path = '../data/Y_test_3d_' + str(num_patients) + '.npy'
+
+    if not os.path.isfile(X_train_path) and not os.path.isfile(Y_train_path) and not os.path.isfile(X_test_path) and not os.path.isfile(Y_test_path):
+        X = np.ndarray(shape=(num_patients, 1, max_num_images, 512, 512), dtype=np.float)
+        Y = np.ndarray(shape=(num_patients, 2), dtype=np.int)
+        i = 0
+        for patient_id, image_paths in patient_and_path.items():
+            if len(image_paths) > max_num_images or patient_id not in labels:
+                continue
+            X[i] = load_3d_patient(image_paths, max_num_images)
+
+            # create a one-hot-encoding of the corresponding label
+            if labels[patient_id] == 0:
+                Y[i] = [1, 0]
+            else:
+                Y[i] = [0, 1]
+            i += 1
+            if i >= num_patients:
+                break
+        print('X.shape in load_3d_data_arrays', X.shape)
+
+        # split up train and test, and save each array to disk
+        X_train = X[0:num_patients * perc_train]
+        np.save(X_train_path, X_train)
+        Y_train = Y[0:num_patients * perc_train]
+        np.save(Y_train_path, Y_train)
+        X_test = X[num_patients * perc_train:num_patients]
+        np.save(X_test_path, X_test)
+        Y_test = Y[num_patients * perc_train:num_patients]
+        np.save(Y_test_path, Y_test)
+    else:
+        # load the arrays from disk
+        X_train = np.load(X_train_path)
+        Y_train = np.load(Y_train_path)
+        X_test = np.load(X_test_path)
+        Y_test = np.load(Y_test_path)
+
+    return X_train, Y_train, X_test, Y_test
+
+def train_model(num_epochs, batch_size, three_D, data):
+    if three_D:
+        X_train = []
+        Y_train = []
+
+        X_test = []
+        Y_test = []
+    else:
+        X_train = data[0][0]
+        Y_train = data[0][1]
+
+        X_test = data[1][0]
+        Y_test = data[1][1]
 
     model = Sequential()
 
-    model.add(Convolution2D(32, 3, 3, activation = 'relu', input_shape = (1, 512, 512)))
+    if three_D:
+        model.add(Conv3D(32, 3, 3, activation = 'relu', input_shape = (len(X_train), 1, None, 512, 512))) # if this doesn't work, try chaning None -> 200...?
 
-    model.add(Convolution2D(32, 3, 3, activation = 'relu'))
-    model.add(MaxPooling2D(pool_size=(2,2)))
+        model.add(Conv3D(32, 3, 3, activation = 'relu'))
+        model.add(MaxPooling3D(pool_size=(2,2)))
+    else:
+        model.add(Convolution2D(32, 3, 3, activation = 'relu', input_shape = (1, 512, 512)))
+
+        model.add(Convolution2D(32, 3, 3, activation = 'relu'))
+        model.add(MaxPooling2D(pool_size=(2,2)))
     model.add(Dropout(0.25))
 
     model.add(Flatten())
@@ -253,6 +336,7 @@ if __name__ == '__main__':
     parser.add_argument('--predict', type=bool, default=False)
     parser.add_argument('--num_images', type=int, default=10000)
     parser.add_argument('--output_path', default='./results/results.csv')
+    parser.add_argument('--three_D', type=bool, default=False)
 
     args = parser.parse_args()
 
@@ -282,7 +366,7 @@ if __name__ == '__main__':
         print('Making predictions')
         prediction = make_prediction(trained_model, submission_and_path)
         with open(args.output_path, 'w') as submission_file:
-            submission_file.write("id,cancer \n")
+            submission_file.write("id,cancer\n")
             for id, result in prediction.items():
                 submission_file.write(str(id) + ',' + str(result) + '\n')
 
@@ -290,7 +374,17 @@ if __name__ == '__main__':
         print('Loading image paths', flush=True)
         image_paths, labels = load_image_paths(args.data_path, args.num_images)
         print('Loading data arrays', flush=True)
-        X_train, Y_train, X_test, Y_test = load_data_arrays(image_paths, labels)
+        if args.three_D:
+            if not os.path.isfile('./data/patient_and_path.p'):
+                patient_and_path = gen_patient_and_path(args.data_path)
+                with open('./data/patient_and_path.p', 'wb') as pat_path:
+                    pickle.dump(patient_and_path, pat_path)
+            else:
+                with open('./data/patient_and_path.p', 'rb') as pat_path:
+                    patient_and_path = pickle.load(pat_path)
+            X_train, Y_train, X_test, Y_test = load_3d_data_arrays(patient_and_path, labels, args.perc_train)
+        else:
+            X_train, Y_train, X_test, Y_test = load_2d_data_arrays(image_paths, labels)
         data = ((X_train, Y_train), (X_test, Y_test))
         print('Training model', flush=True)
-        train_model(args.num_epochs, args.batch_size, data)
+        train_model(args.num_epochs, args.batch_size, args.three_D, data)
