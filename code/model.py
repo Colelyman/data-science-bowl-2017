@@ -12,21 +12,160 @@ from random import randint
 from keras import backend as K
 K.set_image_dim_ordering('th')
 
-def gen_patient_and_path(data_path):
-    patient_and_path = {}
+from datetime import datetime
+#import matplotlib.pyplot as plt
+
+#def plot_accuracy(history):
+#    plt.plot(history.history['acc'])
+#    plt.plot(history.history['val_acc'])
+#    plt.title('model accuracy')
+#    plt.ylabel('accuracy')
+#    plt.xlabel('epoch')
+#    plt.legend(['X_train', 'Y_train'], loc='upper left')
+#    fig = plt.figure()
+#    fig.savefig('accuracyPlot.png')
+
+def create_no_label_dic(data_path):
+    no_label_paths = {}
     for f in os.listdir(data_path):
         path = os.path.join(data_path, f)
         if os.path.isfile(path):
-            print(path)
             image_file = dicom.read_file(path)
             patient_id = image_file.PatientID
-            #print(patient_id)
-            if patient_id not in patient_and_path:
-                patient_and_path[patient_id] = [path]
+
+            if patient_id not in no_label_paths:
+                no_label_paths[patient_id] = [path]
             else:
-                patient_and_path[patient_id].append(path)
-    print(len(patient_and_path))
-    return patient_and_path
+                no_label_paths[patient_id].append(path)
+
+    return no_label_paths
+
+def create_submission_paths(data_path):
+    submission_paths = {}
+    no_label_paths = create_no_label_dic(data_path)
+    csv_path = '../data/stage2_sample_submission.csv'
+    with open(csv_path, 'r') as submission_csv:
+        for line in submission_csv:
+            patient_id = line.strip().split(',')[0]
+            if patient_id in no_label_paths:
+                submission_paths[patient_id] = no_label_paths[patient_id]
+
+    return submission_paths
+
+def load_training_data_arrays(perc_train, training_paths):
+    X_train_path = '../data/M_X_train.npy'
+    X_test_path = '../data/M_X_test.npy'
+    num_train = int(len(training_paths) * perc_train)
+
+    print("Num_train: " + str(num_train))
+    print("Len(training_paths): " + str(len(training_paths)))
+
+    # load X_train and X_test files if created before, otherwise create them
+    if not os.path.isfile(X_train_path):
+        X_train = load_images(training_paths[0:num_train])
+        np.save(X_train_path, X_train)
+        print('Completed X_train generation')
+    else:
+        X_train = np.load(X_train_path)
+
+    if not os.path.isfile(X_test_path):
+        X_test = load_images(training_paths[num_train:len(training_paths)])
+        np.save(X_test_path, X_test)
+        print('Completed X_test generation')
+    else:
+        X_test = np.load(X_test_path)
+
+    #----stopped here---- what is Y ?
+    labels = get_labels()
+    Y = gen_labels(training_paths, labels)
+    Y_train = Y[0:num_train]
+    Y_test = Y[num_train:len(training_paths)]
+
+    return X_train, Y_train, X_test, Y_test
+
+def partition_training_data(perc_patients, non_cancer_paths, cancer_paths):
+    training_paths = []
+    total_non_cancer = 1036 #Excuse the magic number, it is from stage1_labels.csv
+    total_cancer = 365 #Excuse the magic number, it is from stage1_labels.csv
+    number_non_cancer_patients_included = int(total_non_cancer * perc_patients)
+    number_cancer_patients_included = int(total_cancer * perc_patients)
+
+    if number_non_cancer_patients_included == 0:
+        number_non_cancer_patients_included = 1
+    if number_cancer_patients_included == 0:
+        number_cancer_patients_included = 1
+
+    #Add appropriate amounts of each type of patient to the training_paths dic
+    i = 0
+    for patient in non_cancer_paths:
+        if i > number_non_cancer_patients_included:
+            break
+        training_paths.append(non_cancer_paths[patient])
+        i += 1
+    i = 0
+    for patient in cancer_paths:
+        if i > number_cancer_patients_included:
+            break
+        training_paths.append(cancer_paths[patient])
+        i += 1
+
+    np.random.shuffle(training_paths)
+    return training_paths
+
+def get_path_dics(data_path):
+    #If the patient-sorted cancer dictionaries don't exist, then sort them
+    if not os.path.isfile('./data/non_cancer_paths.p'):
+        non_cancer_paths, cancer_paths = create_path_dics(args.data_path)
+        with open('./data/non_cancer_paths.p', 'wb') as non_path:
+            pickle.dump(non_cancer_paths, non_path)
+        with open('./data/cancer_paths.p', 'wb') as cancer_path:
+            pickle.dump(cancer_paths, cancer_path)
+    else:
+        with open('./data/non_cancer_paths.p', 'rb') as non_path:
+            non_cancer_paths = pickle.load(non_path)
+        with open('./data/cancer_paths.p', 'rb') as cancer_path:
+            cancer_paths = pickle.load(cancer_path)
+
+    return non_cancer_paths, cancer_paths
+
+def create_path_dics(data_path):
+    labels = get_labels()
+    non_cancer_paths = {}
+    cancer_paths = {}
+
+    for f in os.listdir(data_path):
+        path = os.path.join(data_path, f)
+        if os.path.isfile(path):
+            image_file = dicom.read_file(path)
+            patient_id = image_file.PatientID
+
+            #Each dictionary contains a list of paths associated with each patient
+            if patient_id in labels:
+                if labels[patient_id] == "0":
+                    if patient_id not in non_cancer_paths:
+                        non_cancer_paths[patient_id] = [path]
+                    else:
+                        non_cancer_paths[patient_id].append(path)
+                else:
+                    if patient_id not in cancer_paths:
+                        cancer_paths[patient_id] = [path]
+                    else:
+                        cancer_paths[patient_id].append(path)
+
+    print("Non_Cancer: " + str(len(non_cancer_paths)))
+    print("Cancer: " + str(len(cancer_paths)))
+    return non_cancer_paths, cancer_paths
+
+def get_labels():
+    label_path = '../data/stage1_labels.csv'
+    labels = {}
+    with open(label_path, 'r') as label_file:
+        for line in label_file:
+            id, cancer = line.strip().split(',')
+            labels[id] = cancer
+    return labels
+
+####################################################################################################
 
 def gen_submission_and_path(patient_and_path):
     submissions = gen_submissions()
@@ -86,7 +225,7 @@ def get_pixel_array(image_path):
 def load_images(image_paths):
     pixel_images = []
     for path in image_paths:
-       pixel_images.append(get_pixel_array(path))
+        pixel_images.append(get_pixel_array(path))
 
     X = np.ndarray(shape=(len(pixel_images), 1, 512, 512), dtype=np.float)
     for i in range(len(pixel_images)):
@@ -159,6 +298,7 @@ def load_data_arrays(image_paths, labels):
         X_train = load_images(image_paths[0:num_train])
         np.save(X_train_path, X_train)
         print('Completed X_train generation')
+
     else:
         X_train = np.load(X_train_path)
 
@@ -191,7 +331,7 @@ def train_model(num_epochs, batch_size, data):
     model.add(Dropout(0.25))
 
     model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
+    model.add(Dense(32, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(2, activation='softmax'))
 
@@ -205,6 +345,7 @@ def train_model(num_epochs, batch_size, data):
 
     model.fit(X_train, Y_train,
               batch_size=batch_size, nb_epoch=num_epochs, callbacks=callbacks_list, verbose=1)
+#    plot_accuracy(history)
     model.save('model.hdf5')
 
     score = model.evaluate(X_test, Y_test, verbose=1)
@@ -240,14 +381,18 @@ def output_args(args):
     print('Number of epochs:', args.num_epochs)
     print('Batch size:', args.batch_size)
     print('Percentage of training set:', args.perc_train)
+    print('Percentage of patients: ', args.perc_patients)
     print('Data path used:', args.data_path, flush=True)
     if args.predict:
         print('Using model to make predictions...')
 
 if __name__ == '__main__':
+    start = datetime.now()
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--perc_patients', help='The percentage of the total patients to include in the training set.', type=float, default=0.2)
     parser.add_argument('--perc_train', help='The percentage of the data to include in the training set.', type=float, default=0.8)
     parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/stage1/')
     parser.add_argument('--predict', type=bool, default=False)
@@ -258,29 +403,23 @@ if __name__ == '__main__':
 
     output_args(args)
     if args.predict:
-        print('Loading image paths', flush=True)
-        patient_and_path = {}
-        if not os.path.isfile('./data/patient_and_path.p'):
-            patient_and_path = gen_patient_and_path(args.data_path)
-            with open('./data/patient_and_path.p', 'wb') as pat_path:
-                pickle.dump(patient_and_path, pat_path)
+        print('Loading submission image paths', flush=True)
+        #Generate a dic of image paths for all patients required for submission
+        submission_paths = {}
+        if not os.path.isfile('./data/stage2_submission_paths.p'):
+            submission_paths = create_submission_paths(args.data_path)
+            with open('./data/stage2_submission_paths.p', 'wb') as sub_path:
+                pickle.dump(submission_paths, sub_path)
         else:
-            with open('./data/patient_and_path.p', 'rb') as pat_path:
-                patient_and_path = pickle.load(pat_path)
-        submission_and_path = {}
-        if not os.path.isfile('./data/submission_and_path.p'):
-            submission_and_path = gen_submission_and_path(patient_and_path)
-            with open('./data/submission_and_path.p', 'wb') as sub_path:
-                pickle.dump(submission_and_path, sub_path)
-        else:
-            with open('./data/submission_and_path.p', 'rb') as sub_path:
-                submission_and_path = pickle.load(sub_path)
+            with open('./data/stage2_submission_paths.p', 'rb') as sub_path:
+                submission_paths = pickle.load(sub_path)
+
         print('Loading the model', flush=True)
         model_path = './model.hdf5'
         trained_model = load_trained_model(model_path)
         print ('Model loaded')
         print('Making predictions')
-        prediction = make_prediction(trained_model, submission_and_path)
+        prediction = make_prediction(trained_model, submission_paths)
         with open(args.output_path, 'w') as submission_file:
             submission_file.write("id,cancer \n")
             for id, result in prediction.items():
@@ -288,9 +427,17 @@ if __name__ == '__main__':
 
     else:
         print('Loading image paths', flush=True)
-        image_paths, labels = load_image_paths(args.data_path, args.num_images)
+        non_cancer_paths, cancer_paths = get_path_dics(args.data_path)
+        print("len(non_cancer_paths): " + str(len(non_cancer_paths)))
+
+        training_paths = partition_training_data(args.perc_patients, non_cancer_paths, cancer_paths)
+
+
         print('Loading data arrays', flush=True)
-        X_train, Y_train, X_test, Y_test = load_data_arrays(image_paths, labels)
-        data = ((X_train, Y_train), (X_test, Y_test))
+        X_train, Y_train, X_test, Y_test = load_training_data_arrays(args.perc_train, training_paths)
+
         print('Training model', flush=True)
+        data = ((X_train, Y_train), (X_test, Y_test))
         train_model(args.num_epochs, args.batch_size, data)
+
+    print('Total runtime: ' + str(datetime.now() - start))

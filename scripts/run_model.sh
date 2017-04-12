@@ -5,7 +5,7 @@
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --mem-per-cpu=64G  # memory per CPU core
 #SBATCH --gres=gpu:1
-#SBATCH -J "train"   # job name
+#SBATCH -J "batched_by_label"   # job name
 
 # Compatibility variables for PBS. Delete if not needed.
 export PBS_NODEFILE=`/fslapps/fslutils/generate_pbs_nodefile`
@@ -23,7 +23,7 @@ source activate dsb
 module load cuda/7.5.18
 
 echo 'Starting training'
-THEANO_FLAGS=device=gpu0,floatX=float32 python ./code/model.py --num_epochs 10 --data_path /fslgroup/fslg_dsb2017/compute/data/stage1/ 
-echo 'Finished trainig'
+THEANO_FLAGS=device=gpu0,floatX=float32 python ./code/model.py --perc_patients 1.0 --num_epochs 1 --data_path /fslgroup/fslg_dsb2017/compute/data/stage1/ 
+echo 'Finished training'
 
 source deactivate dsb
