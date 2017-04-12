@@ -23,7 +23,7 @@ source activate dsb
 module load cuda/7.5.18
 
 echo 'Starting training'
-THEANO_FLAGS=device=gpu0,floatX=float32 python ./code/model.py --perc_patients 1.0 --num_epochs 1 --data_path /fslgroup/fslg_dsb2017/compute/data/stage1/ 
+THEANO_FLAGS=device=gpu0,floatX=float32 python ./code/model.py --predict True --num_epochs 1 --data_path /fslgroup/fslg_dsb2017/compute/data/stage2/ 
 echo 'Finished training'
 
 source deactivate dsb

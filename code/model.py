@@ -30,13 +30,14 @@ def create_no_label_dic(data_path):
     for f in os.listdir(data_path):
         path = os.path.join(data_path, f)
         if os.path.isfile(path):
-            image_file = dicom.read_file(path)
-            patient_id = image_file.PatientID
+            if ".dcm" in path:
+                image_file = dicom.read_file(path)
+                patient_id = image_file.PatientID
 
-            if patient_id not in no_label_paths:
-                no_label_paths[patient_id] = [path]
-            else:
-                no_label_paths[patient_id].append(path)
+                if patient_id not in no_label_paths:
+                    no_label_paths[patient_id] = [path]
+                else:
+                    no_label_paths[patient_id].append(path)
 
     return no_label_paths
 
@@ -408,6 +409,7 @@ if __name__ == '__main__':
         submission_paths = {}
         if not os.path.isfile('./data/stage2_submission_paths.p'):
             submission_paths = create_submission_paths(args.data_path)
+            print('Created submission_paths.p')
             with open('./data/stage2_submission_paths.p', 'wb') as sub_path:
                 pickle.dump(submission_paths, sub_path)
         else:
