@@ -35,28 +35,23 @@ def gen_submission_and_path(patient_and_path):
     submissions = gen_submissions()
     print(len(submissions))
     submissions_and_path = {}
-    for id, file in patient_and_path.items():
-         print(id)
     for id in submissions:
          if id in patient_and_path:
-             print(id)
              if id not in submissions_and_path:
-                 print(id)
                  submissions_and_path[id] = patient_and_path[id]
     print("size of submission_path dictionary: " + str(len(submissions_and_path)))
     return submissions_and_path
 
 def gen_submissions():
-    tests = []
-    sub_path = "../data/sample_submission.csv"
+    submission_ids = []
+    sub_path = "./data/stage2_sample_submission.csv"
     with open(sub_path, 'r') as submission_file:
         for line in submission_file:
             id = line.strip().split(',')[0]
             print(id)
-            tests.append(id)
+            submission_ids.append(id)
     print("end submission file")
-    return tests
-
+    return submission_ids
 
 def load_image_paths(data_path, num_images):
     i = 0
@@ -188,10 +183,8 @@ def load_3d_patient(image_paths, max_num_images):
         pixel_images[image_path] = image.pixel_array.astype(np.float)
         pixel_images[image_path] /= pixel_images[image_path]
 
-    print('Unsorted:', patient_images)
     # sort the images based on the slice location
     patient_images.sort(key = lambda x: x[1])
-    print('Sorted:', patient_images)
 
     # get the pixel array data for each image
     X = np.ndarray(shape=(max_num_images, 512, 512), dtype=np.float)
@@ -201,7 +194,7 @@ def load_3d_patient(image_paths, max_num_images):
     return X
 
 def load_3d_data_arrays(patient_and_path, labels, perc_train):
-    num_patients = 200
+    num_patients = 50
     max_num_images = 160 # this is the maximum number of images allowed per patient
     X_train_path = '../data/X_train_3d_' + str(num_patients) + '.npy'
     Y_train_path = '../data/Y_train_3d_' + str(num_patients) + '.npy'
@@ -209,6 +202,7 @@ def load_3d_data_arrays(patient_and_path, labels, perc_train):
     Y_test_path = '../data/Y_test_3d_' + str(num_patients) + '.npy'
 
     if not os.path.isfile(X_train_path) and not os.path.isfile(Y_train_path) and not os.path.isfile(X_test_path) and not os.path.isfile(Y_test_path):
+        print('Generating 3D image arrays')
         X = np.ndarray(shape=(num_patients, 1, max_num_images, 512, 512), dtype=np.float)
         Y = np.ndarray(shape=(num_patients, 2), dtype=np.int)
         i = 0
@@ -225,20 +219,22 @@ def load_3d_data_arrays(patient_and_path, labels, perc_train):
             i += 1
             if i >= num_patients:
                 break
-        print('X.shape in load_3d_data_arrays', X.shape)
+        print('X.shape', X.shape)
 
         # split up train and test, and save each array to disk
-        X_train = X[0:num_patients * perc_train]
+        X_train = X[0:int(num_patients * perc_train)]
         np.save(X_train_path, X_train)
-        Y_train = Y[0:num_patients * perc_train]
+        Y_train = Y[0:int(num_patients * perc_train)]
         np.save(Y_train_path, Y_train)
-        X_test = X[num_patients * perc_train:num_patients]
+        X_test = X[int(num_patients * perc_train):num_patients]
         np.save(X_test_path, X_test)
-        Y_test = Y[num_patients * perc_train:num_patients]
+        Y_test = Y[int(num_patients * perc_train):num_patients]
         np.save(Y_test_path, Y_test)
     else:
         # load the arrays from disk
+        print('Loading 3D image arrays')
         X_train = np.load(X_train_path)
+        print('X_train.shape', X_train.shape)
         Y_train = np.load(Y_train_path)
         X_test = np.load(X_test_path)
         Y_test = np.load(Y_test_path)
@@ -246,31 +242,25 @@ def load_3d_data_arrays(patient_and_path, labels, perc_train):
     return X_train, Y_train, X_test, Y_test
 
 def train_model(num_epochs, batch_size, three_D, data):
-    if three_D:
-        X_train = []
-        Y_train = []
+    X_train = data[0][0]
+    Y_train = data[0][1]
 
-        X_test = []
-        Y_test = []
-    else:
-        X_train = data[0][0]
-        Y_train = data[0][1]
-
-        X_test = data[1][0]
-        Y_test = data[1][1]
+    X_test = data[1][0]
+    Y_test = data[1][1]
 
     model = Sequential()
 
     if three_D:
-        model.add(Conv3D(32, 3, 3, activation = 'relu', input_shape = (len(X_train), 1, None, 512, 512))) # if this doesn't work, try chaning None -> 200...?
+        model.add(Conv3D(32, 3, 3, 3, activation = 'relu', input_shape = (1, 160, 512, 512))) # if this doesn't work, try chaning None -> 200...?
 
-        model.add(Conv3D(32, 3, 3, activation = 'relu'))
-        model.add(MaxPooling3D(pool_size=(2,2)))
+        model.add(Conv3D(32, 3, 3, 3, activation = 'relu'))
+        model.add(MaxPooling3D(pool_size=(2, 2, 2)))
     else:
         model.add(Convolution2D(32, 3, 3, activation = 'relu', input_shape = (1, 512, 512)))
 
         model.add(Convolution2D(32, 3, 3, activation = 'relu'))
         model.add(MaxPooling2D(pool_size=(2,2)))
+
     model.add(Dropout(0.25))
 
     model.add(Flatten())
@@ -282,13 +272,13 @@ def train_model(num_epochs, batch_size, three_D, data):
                   optimizer='adam',
                   metrics=['accuracy'])
 
-    checkpoint_path = 'weights.hdf5'
+    checkpoint_path = 'weights_' + str(len(X_train) + len(X_test)) + '.hdf5'
     checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=1, mode='max', period=1)
     callbacks_list = [checkpoint]
 
     model.fit(X_train, Y_train,
               batch_size=batch_size, nb_epoch=num_epochs, callbacks=callbacks_list, verbose=1)
-    model.save('model.hdf5')
+    model.save('model_' + str(len(X_train) + len(X_test)) + '.hdf5')
 
     score = model.evaluate(X_test, Y_test, verbose=1)
     print(score)
@@ -315,7 +305,7 @@ def make_prediction(model, patient_imagepath_dict):
 
 def output_results(path):
     with open(path, 'w') as submission_file:
-        submission_file.write("id, cancer \n")
+        submission_file.write("id, cancer\n")
         for id, result in prediction.items():
             submission_file.write(str(id) + ', ' + str(result) + '\n')
 
@@ -326,6 +316,8 @@ def output_args(args):
     print('Data path used:', args.data_path, flush=True)
     if args.predict:
         print('Using model to make predictions...')
+    if args.three_D:
+        print('Using Conv3D architecture')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -335,7 +327,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', help='The path to the parent directory of the data image files.', type=str, default='../data/stage1/')
     parser.add_argument('--predict', type=bool, default=False)
     parser.add_argument('--num_images', type=int, default=10000)
-    parser.add_argument('--output_path', default='./results/results.csv')
+    parser.add_argument('--output_path', default='./results/results2.csv')
     parser.add_argument('--three_D', type=bool, default=False)
 
     args = parser.parse_args()
