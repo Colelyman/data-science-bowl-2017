@@ -9,7 +9,7 @@ from keras.layers.convolutional import Conv3D
 from keras.layers.pooling import MaxPooling3D
 from keras.callbacks import ModelCheckpoint
 
-import dicom, os, argparse, pickle
+import dicom, os, argparse, pickle, time, math
 from random import randint
 
 from keras import backend as K
@@ -181,7 +181,7 @@ def load_3d_patient(image_paths, max_num_images):
         image = dicom.read_file(image_path)
         patient_images.append((image_path, image.SliceLocation))
         pixel_images[image_path] = image.pixel_array.astype(np.float)
-        pixel_images[image_path] /= pixel_images[image_path]
+        pixel_images[image_path] /= np.max(pixel_images[image_path])
 
     # sort the images based on the slice location
     patient_images.sort(key = lambda x: x[1])
@@ -241,13 +241,39 @@ def load_3d_data_arrays(patient_and_path, labels, perc_train):
 
     return X_train, Y_train, X_test, Y_test
 
-def train_model(num_epochs, batch_size, three_D, data):
-    X_train = data[0][0]
-    Y_train = data[0][1]
+def data_gen(image_paths, labels, batch_size):
+    X_train = []
+    Y_train = []
+    print('Number of Image paths', len(image_paths), flush=True)
+    print('Number of Labels', len(labels), flush=True)
+    while True:
+        for image_path in image_paths:
+            image = dicom.read_file(image_path)
+            patient_id = image.PatientID
 
-    X_test = data[1][0]
-    Y_test = data[1][1]
+            if patient_id not in labels:
+                continue
 
+            image = image.pixel_array.astype(np.float)
+            image /= np.max(image)
+            X_train.append(image)
+            del(image)
+            label = labels[patient_id]
+            if label == 0:
+                Y_train.append([1, 0])
+            else:
+                Y_train.append([0, 1])
+
+            if len(X_train) == batch_size:
+                X_train = np.array(X_train).reshape(batch_size, 1, 512, 512)
+                yield (np.array(X_train), np.array(Y_train))
+                X_train = []
+                Y_train = []
+
+        if len(X_train) > 0:
+            yield (np.array(X_train), np.array(Y_train))
+
+def train_model(num_epochs, batch_size, three_D, image_paths, labels):
     model = Sequential()
 
     if three_D:
@@ -272,16 +298,20 @@ def train_model(num_epochs, batch_size, three_D, data):
                   optimizer='adam',
                   metrics=['accuracy'])
 
-    checkpoint_path = 'weights_' + str(len(X_train) + len(X_test)) + '.hdf5'
-    checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=1, mode='max', period=1)
+    checkpoint_path = 'weights_' + time.strftime('%Y:%m:%d:%H:%M:%S') + '.hdf5'
+    checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=1, mode='max')
     callbacks_list = [checkpoint]
 
-    model.fit(X_train, Y_train,
-              batch_size=batch_size, nb_epoch=num_epochs, callbacks=callbacks_list, verbose=1)
-    model.save('model_' + str(len(X_train) + len(X_test)) + '.hdf5')
+    if three_D:
+        pass
+    else:
+        steps = math.ceil(len(image_paths) / batch_size)
+        model.fit_generator(data_gen(image_paths, labels, batch_size),
+            steps, num_epochs, callbacks=callbacks_list, verbose=1)
+    model.save('model_' + time.strftime('%Y:%m:%d:%H:%M:%S') + '.hdf5')
 
-    score = model.evaluate(X_test, Y_test, verbose=1)
-    print(score)
+    #score = model.evaluate(X_test, Y_test, verbose=1)
+    #print(score)
 
 def load_trained_model(model_path):
     model = load_model(model_path)
@@ -375,8 +405,8 @@ if __name__ == '__main__':
                 with open('./data/patient_and_path.p', 'rb') as pat_path:
                     patient_and_path = pickle.load(pat_path)
             X_train, Y_train, X_test, Y_test = load_3d_data_arrays(patient_and_path, labels, args.perc_train)
-        else:
+        '''else:
             X_train, Y_train, X_test, Y_test = load_2d_data_arrays(image_paths, labels)
-        data = ((X_train, Y_train), (X_test, Y_test))
+        data = ((X_train, Y_train), (X_test, Y_test))'''
         print('Training model', flush=True)
-        train_model(args.num_epochs, args.batch_size, args.three_D, data)
+        train_model(args.num_epochs, args.batch_size, args.three_D, image_paths, labels)
